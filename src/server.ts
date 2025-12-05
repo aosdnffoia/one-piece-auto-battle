@@ -5,7 +5,8 @@ import http from 'http';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import { Server, Socket } from 'socket.io';
-import { computeSynergies, factionSynergies, roleSynergies, serializeUnit, units } from './gameData';
+import { computeSynergies, factionSynergies, roleSynergies, serializeUnit, units, getWaveByIndex, pveWaves } from './gameData';
+import { mapFormationToCombat, mapPveUnits, simulateBattle } from './battle/simulator';
 import { buildFormationState, lockFormation, serializeFormation } from './formation/validation';
 import { FormationState } from './formation/types';
 import { REROLL_COST, TIER_COST } from './shop/probabilities';
@@ -281,6 +282,10 @@ app.post('/api/synergy-preview', (req, res) => {
   res.json({ count: selected.length, synergies });
 });
 
+app.get('/api/pve/waves', (_req, res) => {
+  res.json({ waves: pveWaves });
+});
+
 app.get('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
   const state = getFormation(user.id);
@@ -313,10 +318,57 @@ app.post('/api/formation/lock', authMiddleware, (req: AuthedRequest, res) => {
   res.json({ formation: serializeFormation(locked) });
 });
 
+app.post('/api/pve/start', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  const formation = formationByUser.get(user.id);
+  if (!formation || formation.slots.length === 0) {
+    return res.status(400).json({ error: 'Set a formation first' });
+  }
+  const wave = getWaveByIndex(state.pveWave) || getWaveByIndex(1);
+  if (!wave) return res.status(400).json({ error: 'No PVE wave configured' });
+
+  const playerUnits = mapFormationToCombat(
+    {
+      slots: formation.slots.map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })),
+    },
+    unitsById,
+  );
+  const enemyUnits = mapPveUnits(wave.units);
+  const result = simulateBattle(playerUnits, enemyUnits);
+
+  let coinsEarned = 0;
+  let xpEarned = 0;
+  if (result.winner === 'player') {
+    coinsEarned = wave.rewardCoins;
+    xpEarned = wave.rewardXp;
+    state.coins += coinsEarned;
+    state.xp += xpEarned;
+    state.pveWave += 1;
+    emitShopUpdate(user.id, state);
+  }
+
+  const payload = {
+    wave: wave.id,
+    name: wave.name,
+    result: result.winner,
+    coinsEarned,
+    xpEarned,
+    survivorsPlayer: result.survivorsPlayer,
+    survivorsEnemy: result.survivorsEnemy,
+    log: result.log,
+    nextWave: state.pveWave,
+  };
+  const socket = socketByUser.get(user.id);
+  socket?.emit('round_start', { mode: 'pve', wave: wave.id });
+  socket?.emit('round_result', payload);
+  res.json(payload);
+});
+
 app.get('/api/shop', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
   const state = getPlayerState(user);
-  res.json({ shop: state.shop.map(serializeUnit), coins: state.coins, level: state.level, shopVersion: state.shopVersion });
+  res.json({ shop: state.shop.map(serializeUnit), coins: state.coins, level: state.level, shopVersion: state.shopVersion, pveWave: state.pveWave });
 });
 
 app.post('/api/shop/reroll', authMiddleware, (req: AuthedRequest, res) => {

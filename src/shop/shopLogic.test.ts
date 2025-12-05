@@ -42,6 +42,7 @@ describe('player economy', () => {
     const state = ensurePlayerState(undefined, { coins: 8, level: 2 }, deterministicRng);
     expect(state.coins).toBe(8);
     expect(state.shop.length).toBe(SHOP_SIZE);
+    expect(state.pveWave).toBe(1);
   });
 
   test('buy and sell flow updates coins and bench', () => {

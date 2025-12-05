@@ -46,6 +46,9 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 - `POST /api/formation/lock` — lock current formation for battle
 - Frontend: open `http://localhost:3000/` after starting the server to use the prototype UI (login, shop, bench, formation, queue).
 - React client: run via Vite dev server (`cd client && npm run dev`) for the upgraded UI; default API base is `http://localhost:3000` or override with `VITE_API_BASE`.
+- PVE (Phase 5):
+- `GET /api/pve/waves` — list configured waves
+- `POST /api/pve/start` — run current PVE wave using your saved formation; rewards coins/xp on win and advances wave counter
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
@@ -60,6 +63,7 @@ Server -> Client:
 - `shop_update` `{ shop, coins, level, shopVersion, bench }`
 - `formation_update` `{ formation }`
 - `synergy_update` `{ formation }`
+- `round_result` for PVE start endpoint returns via socket (and HTTP response)
 
 ## Notes
 - State is in-memory for now (users reset on restart).

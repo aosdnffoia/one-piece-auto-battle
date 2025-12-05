@@ -13,6 +13,7 @@ type Unit = {
   abilityType: string;
   abilityValue: number;
   abilityDescription: string;
+  image?: string;
 };
 
 type BenchUnit = { instanceId: string; unitId: string };
@@ -21,6 +22,14 @@ type FormationState = {
   slots: FormationSlot[];
   locked: boolean;
   synergySummary?: { faction: string[]; role: string[] };
+};
+
+type PveWave = {
+  id: string;
+  name: string;
+  rewardCoins: number;
+  rewardXp: number;
+  units: { id: string; name: string; power: number; health: number; role: string }[];
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000';
@@ -39,6 +48,8 @@ function App() {
   const [formationDraft, setFormationDraft] = useState<FormationSlot[]>([]);
   const [coins, setCoins] = useState(0);
   const [level, setLevel] = useState(1);
+  const [pveWave, setPveWave] = useState(1);
+  const [waves, setWaves] = useState<PveWave[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [queueStatus, setQueueStatus] = useState<string>('not queued');
   const [selectedBenchId, setSelectedBenchId] = useState<string | null>(null);
@@ -75,6 +86,9 @@ function App() {
     api<{ units: Unit[] }>('/api/units')
       .then((data) => setUnits(data.units))
       .catch((err) => appendLog(`Failed to load units: ${err.message}`));
+    api<{ waves: PveWave[] }>('/api/pve/waves')
+      .then((data) => setWaves(data.waves))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -104,6 +118,9 @@ function App() {
     s.on('round_start', (data: any) => {
       appendLog(`Round start: ${data.mode}`);
     });
+    s.on('round_result', (data: any) => {
+      appendLog(`Round result: ${data.result} (wave ${data.wave || ''})`);
+    });
     return () => {
       s.disconnect();
     };
@@ -131,12 +148,13 @@ function App() {
 
   async function loadShop(authToken?: string | null) {
     try {
-      const res = await api<{ shop: Unit[]; coins: number; level: number; shopVersion: number }>('/api/shop', {
+      const res = await api<{ shop: Unit[]; coins: number; level: number; shopVersion: number; pveWave?: number }>('/api/shop', {
         headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
       });
       setShop(res.shop);
       setCoins(res.coins);
       setLevel(res.level);
+      if (res.pveWave) setPveWave(res.pveWave);
     } catch (err: any) {
       appendLog(`Load shop failed: ${err.message}`);
     }
@@ -220,8 +238,25 @@ function App() {
     }
   }
 
+  async function startPve() {
+    try {
+      const res = await api<any>('/api/pve/start', { method: 'POST' });
+      appendLog(`PVE ${res.wave} ${res.result}: +${res.coinsEarned}c +${res.xpEarned}xp`);
+      setPveWave(res.nextWave);
+      await loadShop();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
   function benchName(b: BenchUnit) {
     return unitsById.get(b.unitId)?.name || b.unitId;
+  }
+
+  function unitImage(u: Unit) {
+    if (!u.image) return '';
+    if (u.image.startsWith('http')) return u.image;
+    return `${API_BASE}${u.image.startsWith('/') ? u.image : '/' + u.image}`;
   }
 
   function handleSlotClick(index: number) {
@@ -318,6 +353,7 @@ function App() {
                   </div>
                   <div className="badge tier">Tier {u.tier}</div>
                 </div>
+                {unitImage(u) && <img className="portrait" src={unitImage(u)} alt={u.name} onError={(e) => ((e.target as HTMLImageElement).style.display = 'none')} />}
                 <div className="stats">
                   <span>Power {u.power}</span>
                   <span>HP {u.health}</span>
@@ -388,6 +424,26 @@ function App() {
             })}
           </div>
           {formation.locked && <div className="notice">Formation locked</div>}
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <h2>PVE Waves</h2>
+            <button className="btn small primary" onClick={startPve}>
+              Start Wave {pveWave}
+            </button>
+          </div>
+          <div className="muted">Current wave: {pveWave}</div>
+          <div className="bench">
+            {waves.map((w) => (
+              <div key={w.id} className={`chip ${w.id === `wave${pveWave}` ? 'active' : ''}`}>
+                <div className="title">{w.name}</div>
+                <div className="muted">Rewards: {w.rewardCoins}c / {w.rewardXp}xp</div>
+                <div className="muted">Units: {w.units.map((u) => u.name).join(', ')}</div>
+              </div>
+            ))}
+            {!waves.length && <div className="muted">No waves loaded</div>}
+          </div>
         </section>
 
         <section className="panel">

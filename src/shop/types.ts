@@ -12,6 +12,7 @@ export type PlayerState = {
   shop: UnitDefinition[];
   bench: BenchUnit[];
   shopVersion: number;
+  pveWave: number;
 };
 
 export type TierProbabilities = {

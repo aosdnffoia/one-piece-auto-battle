@@ -63,6 +63,7 @@ export function ensurePlayerState(
     bench: [],
     shop: generateShop(level, rng),
     shopVersion: 1,
+    pveWave: 1,
   };
 }
 
@@ -115,6 +116,7 @@ export function serializePlayerState(state: PlayerState) {
     bench: state.bench,
     shop: state.shop,
     shopVersion: state.shopVersion,
+    pveWave: state.pveWave,
   };
 }
 
