@@ -30,9 +30,13 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 ## Game Data (Phase 2)
 - Static seeds for 49 units, faction synergies, and role synergies live in `src/gameData`.
 - HTTP endpoints:
-  - `GET /api/units` — serialized unit list (for shop/formation UI)
-  - `GET /api/synergies` — faction + role synergy definitions
-  - `POST /api/synergy-preview` body `{ "unitIds": ["luffy","zoro"] }` — returns active synergies for selected units
+- `GET /api/units` — serialized unit list (for shop/formation UI)
+- `GET /api/synergies` — faction + role synergy definitions
+- `POST /api/synergy-preview` body `{ "unitIds": ["luffy","zoro"] }` — returns active synergies for selected units
+- `GET /api/shop` — current shop for the authed player
+- `POST /api/shop/reroll` — spend coins (2) to refresh shop
+- `POST /api/shop/buy` body `{ "unitId": "<id>" }` — buy from shop, deduct coins based on tier
+- `POST /api/shop/sell` body `{ "instanceId": "<benchId>" }` — sell a benched unit, partial refund
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
@@ -42,6 +46,7 @@ Client -> Server:
 Server -> Client:
 - `match_found` `{ roomId, opponent: { id, username }, isBot }`
 - `round_start` placeholder message when paired with bot
+- `shop_update` `{ shop, coins, level, shopVersion, bench }`
 
 ## Notes
 - State is in-memory for now (users reset on restart).

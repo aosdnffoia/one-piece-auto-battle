@@ -6,6 +6,9 @@ import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import { Server, Socket } from 'socket.io';
 import { computeSynergies, factionSynergies, roleSynergies, serializeUnit, units } from './gameData';
+import { REROLL_COST, TIER_COST } from './shop/probabilities';
+import { buyUnit, ensurePlayerState, rerollShop, seedTierBuckets, sellUnit, serializePlayerState } from './shop/shopLogic';
+import { PlayerState } from './shop/types';
 
 dotenv.config();
 
@@ -42,6 +45,9 @@ const socketByUser = new Map<string, Socket>();
 const activeMatches = new Map<string, Match>();
 const botTimeouts = new Map<string, NodeJS.Timeout>();
 const unitsById = new Map(units.map((u) => [u.id, u]));
+const playerStateByUser = new Map<string, PlayerState>();
+
+seedTierBuckets(units);
 
 function getJwtSecret(): string {
   if (!JWT_SECRET) {
@@ -74,6 +80,13 @@ function getOrCreateUser(username: string): AuthUser {
     }
   }
   return createUser(username);
+}
+
+function getPlayerState(user: AuthUser): PlayerState {
+  const existing = playerStateByUser.get(user.id);
+  const state = ensurePlayerState(existing, { coins: user.coins, level: 1 });
+  playerStateByUser.set(user.id, state);
+  return state;
 }
 
 function issueToken(user: AuthUser) {
@@ -117,6 +130,18 @@ function removeFromQueue(userId: string) {
     clearTimeout(existingTimer);
     botTimeouts.delete(userId);
   }
+}
+
+function emitShopUpdate(userId: string, state: PlayerState) {
+  const socket = socketByUser.get(userId);
+  if (!socket) return;
+  socket.emit('shop_update', {
+    shop: state.shop.map(serializeUnit),
+    coins: state.coins,
+    level: state.level,
+    shopVersion: state.shopVersion,
+    bench: state.bench,
+  });
 }
 
 function scheduleBotMatch(userId: string) {
@@ -203,12 +228,15 @@ app.post('/api/login', (req, res) => {
     return res.status(400).json({ error: 'username is required' });
   }
   const user = getOrCreateUser(username);
+  const state = getPlayerState(user);
   const token = issueToken(user);
-  return res.json({ token, user });
+  return res.json({ token, user, state: serializePlayerState(state) });
 });
 
 app.get('/api/me', authMiddleware, (req: AuthedRequest, res) => {
-  return res.json({ user: req.user });
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  return res.json({ user, state: serializePlayerState(state) });
 });
 
 app.get('/api/lobby', (_req, res) => {
@@ -232,6 +260,66 @@ app.post('/api/synergy-preview', (req, res) => {
     .filter((u): u is NonNullable<typeof u> => Boolean(u));
   const synergies = computeSynergies(selected);
   res.json({ count: selected.length, synergies });
+});
+
+app.get('/api/shop', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  res.json({ shop: state.shop.map(serializeUnit), coins: state.coins, level: state.level, shopVersion: state.shopVersion });
+});
+
+app.post('/api/shop/reroll', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  try {
+    rerollShop(state);
+    emitShopUpdate(user.id, state);
+    res.json({ shop: state.shop.map(serializeUnit), coins: state.coins, shopVersion: state.shopVersion, cost: REROLL_COST });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message ?? 'Unable to reroll' });
+  }
+});
+
+app.post('/api/shop/buy', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  const unitId = String(req.body?.unitId || '');
+  if (!unitId) {
+    return res.status(400).json({ error: 'unitId is required' });
+  }
+  try {
+    const { bought, cost } = buyUnit(state, unitId);
+    emitShopUpdate(user.id, state);
+    res.json({
+      bought,
+      cost,
+      coins: state.coins,
+      shop: state.shop.map(serializeUnit),
+      bench: state.bench,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message ?? 'Unable to buy unit' });
+  }
+});
+
+app.post('/api/shop/sell', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getPlayerState(user);
+  const instanceId = String(req.body?.instanceId || '');
+  if (!instanceId) {
+    return res.status(400).json({ error: 'instanceId is required' });
+  }
+  try {
+    const { refund } = sellUnit(state, instanceId);
+    emitShopUpdate(user.id, state);
+    res.json({
+      refund,
+      coins: state.coins,
+      bench: state.bench,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message ?? 'Unable to sell unit' });
+  }
 });
 
 const httpServer = http.createServer(app);
