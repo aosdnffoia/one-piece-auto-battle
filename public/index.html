@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>One Piece Auto Battler - Prototype</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #0b1224; color: #e8eefc; }
+    header { padding: 16px; background: #0f1833; display: flex; align-items: center; gap: 12px; }
+    h1 { margin: 0; font-size: 20px; }
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+    section { background: #131c36; border: 1px solid #1f2b4d; border-radius: 8px; padding: 12px; }
+    section h2 { margin-top: 0; font-size: 16px; }
+    button { background: #2b8bf2; color: #fff; border: none; padding: 8px 10px; border-radius: 4px; cursor: pointer; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    input { padding: 8px; border: 1px solid #1f2b4d; border-radius: 4px; background: #0f1833; color: #e8eefc; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+    .card { border: 1px solid #1f2b4d; padding: 8px; border-radius: 6px; background: #0f1833; margin-bottom: 8px; }
+    .shop-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+    .bench { display: flex; flex-wrap: wrap; gap: 8px; }
+    .formation { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .slot { border: 1px dashed #35508a; min-height: 60px; padding: 6px; border-radius: 4px; text-align: center; }
+    .log { background: #0f1833; padding: 8px; border-radius: 6px; height: 180px; overflow-y: auto; font-family: monospace; font-size: 13px; }
+    small { color: #a7b5d8; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>One Piece Auto Battler</h1>
+    <div class="row">
+      <input id="username" placeholder="username" />
+      <button id="loginBtn">Login</button>
+      <button id="queueBtn" disabled>Join Queue</button>
+      <button id="leaveQueueBtn" disabled>Leave Queue</button>
+    </div>
+    <small id="status">Not logged in</small>
+  </header>
+
+  <main>
+    <section>
+      <h2>Shop</h2>
+      <div class="row">
+        <button id="refreshShopBtn" disabled>Refresh Shop</button>
+        <span id="coins">Coins: 0</span>
+        <span id="level">Level: 1</span>
+      </div>
+      <div id="shop" class="shop-grid"></div>
+    </section>
+
+    <section>
+      <h2>Bench</h2>
+      <div id="bench" class="bench"></div>
+    </section>
+
+    <section>
+      <h2>Formation (1x7)</h2>
+      <div class="row">
+        <button id="saveFormationBtn" disabled>Save Formation</button>
+        <button id="lockFormationBtn" disabled>Lock Formation</button>
+        <small id="synergySummary"></small>
+      </div>
+      <div id="formation" class="formation"></div>
+    </section>
+
+    <section>
+      <h2>Logs</h2>
+      <div id="log" class="log"></div>
+    </section>
+  </main>
+
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const shopEl = document.getElementById('shop');
+    const benchEl = document.getElementById('bench');
+    const formationEl = document.getElementById('formation');
+    const synergySummaryEl = document.getElementById('synergySummary');
+    const coinsEl = document.getElementById('coins');
+    const levelEl = document.getElementById('level');
+
+    let token = null;
+    let socket = null;
+    let currentShop = [];
+    let currentBench = [];
+    let currentFormation = { slots: [], locked: false };
+
+    function log(message) {
+      const ts = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.textContent = `[${ts}] ${message}`;
+      logEl.prepend(line);
+    }
+
+    async function api(path, options = {}) {
+      const headers = options.headers || {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+      const res = await fetch(path, {
+        ...options,
+        headers,
+        body: options.body && !(options.body instanceof FormData) ? JSON.stringify(options.body) : options.body
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Request failed');
+      }
+      return res.json();
+    }
+
+    function renderShop() {
+      shopEl.innerHTML = '';
+      currentShop.forEach((u) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <strong>${u.name}</strong> <small>Tier ${u.tier}</small><br/>
+          Faction: ${u.faction} | Role: ${u.role}<br/>
+          Power: ${u.power} | HP: ${u.health}<br/>
+          Ability: ${u.abilityDescription}<br/>
+          <button data-id="${u.id}">Buy (${u.tier}g)</button>
+        `;
+        card.querySelector('button').onclick = () => buyUnit(u.id);
+        shopEl.appendChild(card);
+      });
+    }
+
+    function renderBench() {
+      benchEl.innerHTML = '';
+      currentBench.forEach((b) => {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div>${b.instanceId}</div>
+          <button data-id="${b.instanceId}">Sell</button>
+        `;
+        card.querySelector('button').onclick = () => sellUnit(b.instanceId);
+        benchEl.appendChild(card);
+      });
+    }
+
+    function renderFormation() {
+      formationEl.innerHTML = '';
+      for (let i = 0; i < 7; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'slot';
+        const occupied = currentFormation.slots.find((s) => s.index === i);
+        slot.innerHTML = occupied ? `Slot ${i + 1}<br/><small>${occupied.instanceId}</small>` : `Slot ${i + 1}<br/><small>Empty</small>`;
+        slot.onclick = () => assignToSlot(i);
+        formationEl.appendChild(slot);
+      }
+      synergySummaryEl.textContent = currentFormation.synergySummary
+        ? `Factions: ${currentFormation.synergySummary.faction.join(', ') || 'none'} | Roles: ${currentFormation.synergySummary.role.join(', ') || 'none'}`
+        : '';
+      document.getElementById('lockFormationBtn').disabled = !currentFormation.slots.length;
+    }
+
+    async function login() {
+      const username = document.getElementById('username').value.trim();
+      if (!username) return alert('Enter a username');
+      const data = await api('/api/login', { method: 'POST', body: { username } });
+      token = data.token;
+      statusEl.textContent = `Logged in as ${data.user.username}`;
+      log(`Logged in. Coins: ${data.state.coins}`);
+      currentBench = data.state.bench || [];
+      await loadShop();
+      await loadFormation();
+      connectSocket();
+      document.getElementById('queueBtn').disabled = false;
+      document.getElementById('refreshShopBtn').disabled = false;
+      document.getElementById('saveFormationBtn').disabled = false;
+    }
+
+    async function loadShop() {
+      const data = await api('/api/shop');
+      currentShop = data.shop;
+      coinsEl.textContent = `Coins: ${data.coins}`;
+      levelEl.textContent = `Level: ${data.level}`;
+      renderShop();
+      renderBench();
+    }
+
+    async function refreshShop() {
+      await api('/api/shop/reroll', { method: 'POST' });
+      log('Rerolled shop (-2 coins)');
+      await loadShop();
+    }
+
+    async function buyUnit(unitId) {
+      try {
+        const res = await api('/api/shop/buy', { method: 'POST', body: { unitId } });
+        currentBench = res.bench;
+        coinsEl.textContent = `Coins: ${res.coins}`;
+        currentShop = res.shop;
+        renderShop();
+        renderBench();
+        log(`Bought unit ${unitId}`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function sellUnit(instanceId) {
+      try {
+        const res = await api('/api/shop/sell', { method: 'POST', body: { instanceId } });
+        currentBench = res.bench;
+        coinsEl.textContent = `Coins: ${res.coins}`;
+        renderBench();
+        renderFormation();
+        log(`Sold unit ${instanceId}`);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadFormation() {
+      const res = await api('/api/formation');
+      currentFormation = res.formation;
+      renderFormation();
+    }
+
+    async function saveFormation() {
+      const payload = { slots: currentFormation.slots };
+      try {
+        const res = await api('/api/formation', { method: 'POST', body: payload });
+        currentFormation = res.formation;
+        renderFormation();
+        log('Formation saved');
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function lockFormation() {
+      try {
+        const res = await api('/api/formation/lock', { method: 'POST' });
+        currentFormation = res.formation;
+        renderFormation();
+        log('Formation locked');
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    function assignToSlot(index) {
+      if (!currentBench.length) return alert('No units on bench');
+      const instanceId = prompt('Enter bench instanceId to place:', currentBench[0]?.instanceId || '');
+      if (!instanceId) return;
+      if (!currentBench.find((b) => b.instanceId === instanceId)) {
+        alert('Bench unit not found');
+        return;
+      }
+      const existingIdx = currentFormation.slots.findIndex((s) => s.index === index);
+      if (existingIdx >= 0) {
+        currentFormation.slots.splice(existingIdx, 1);
+      }
+      currentFormation.slots.push({ index, instanceId });
+      renderFormation();
+    }
+
+    function connectSocket() {
+      if (!token) return;
+      socket = io({ auth: { token } });
+      socket.on('connect', () => log('Socket connected'));
+      socket.on('shop_update', (data) => {
+        currentShop = data.shop;
+        currentBench = data.bench;
+        coinsEl.textContent = `Coins: ${data.coins}`;
+        levelEl.textContent = `Level: ${data.level}`;
+        renderShop();
+        renderBench();
+        log('Shop update received');
+      });
+      socket.on('formation_update', (data) => {
+        currentFormation = data.formation;
+        renderFormation();
+        log('Formation update received');
+      });
+      socket.on('synergy_update', (data) => {
+        currentFormation = data.formation;
+        renderFormation();
+        log('Synergy update received');
+      });
+      socket.on('match_found', (data) => {
+        log(`Match found vs ${data.opponent.username} ${data.isBot ? '(bot)' : ''}`);
+      });
+    }
+
+    document.getElementById('loginBtn').onclick = login;
+    document.getElementById('refreshShopBtn').onclick = refreshShop;
+    document.getElementById('saveFormationBtn').onclick = saveFormation;
+    document.getElementById('lockFormationBtn').onclick = lockFormation;
+    document.getElementById('queueBtn').onclick = () => {
+      if (!socket) return alert('Connect first (login)');
+      socket.emit('join_queue', { allowBot: true }, (ack) => log(`Queue: ${JSON.stringify(ack)}`));
+      document.getElementById('leaveQueueBtn').disabled = false;
+    };
+    document.getElementById('leaveQueueBtn').onclick = () => {
+      socket?.emit('leave_queue', (ack) => log(`Left queue: ${JSON.stringify(ack)}`));
+    };
+  </script>
+</body>
+</html>

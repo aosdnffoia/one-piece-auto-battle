@@ -37,16 +37,24 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 - `POST /api/shop/reroll` — spend coins (2) to refresh shop
 - `POST /api/shop/buy` body `{ "unitId": "<id>" }` — buy from shop, deduct coins based on tier
 - `POST /api/shop/sell` body `{ "instanceId": "<benchId>" }` — sell a benched unit, partial refund
+- `GET /api/formation` — current formation (1x7 row)
+- `POST /api/formation` body `{ "slots":[{"index":0,"instanceId":"..."}] }` — validate and set formation
+- `POST /api/formation/lock` — lock current formation for battle
+- Frontend: open `http://localhost:3000/` after starting the server to use the prototype UI (login, shop, bench, formation, queue).
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
 - `join_queue` (payload: `{ allowBot?: boolean }`, ack returns `{ status, position }`)
 - `leave_queue`
+- `set_formation` payload `{ slots: [{ index, instanceId }] }` ack `{ status, formation? }`
+- `lock_formation` ack `{ status, formation? }`
 
 Server -> Client:
 - `match_found` `{ roomId, opponent: { id, username }, isBot }`
 - `round_start` placeholder message when paired with bot
 - `shop_update` `{ shop, coins, level, shopVersion, bench }`
+- `formation_update` `{ formation }`
+- `synergy_update` `{ formation }`
 
 ## Notes
 - State is in-memory for now (users reset on restart).

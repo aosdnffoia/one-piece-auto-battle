@@ -6,6 +6,8 @@ import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import { Server, Socket } from 'socket.io';
 import { computeSynergies, factionSynergies, roleSynergies, serializeUnit, units } from './gameData';
+import { buildFormationState, lockFormation, serializeFormation } from './formation/validation';
+import { FormationState } from './formation/types';
 import { REROLL_COST, TIER_COST } from './shop/probabilities';
 import { buyUnit, ensurePlayerState, rerollShop, seedTierBuckets, sellUnit, serializePlayerState } from './shop/shopLogic';
 import { PlayerState } from './shop/types';
@@ -46,6 +48,7 @@ const activeMatches = new Map<string, Match>();
 const botTimeouts = new Map<string, NodeJS.Timeout>();
 const unitsById = new Map(units.map((u) => [u.id, u]));
 const playerStateByUser = new Map<string, PlayerState>();
+const formationByUser = new Map<string, FormationState>();
 
 seedTierBuckets(units);
 
@@ -87,6 +90,10 @@ function getPlayerState(user: AuthUser): PlayerState {
   const state = ensurePlayerState(existing, { coins: user.coins, level: 1 });
   playerStateByUser.set(user.id, state);
   return state;
+}
+
+function getFormation(userId: string): FormationState | undefined {
+  return formationByUser.get(userId);
 }
 
 function issueToken(user: AuthUser) {
@@ -141,6 +148,17 @@ function emitShopUpdate(userId: string, state: PlayerState) {
     level: state.level,
     shopVersion: state.shopVersion,
     bench: state.bench,
+  });
+}
+
+function emitFormationUpdate(userId: string, state: FormationState) {
+  const socket = socketByUser.get(userId);
+  if (!socket) return;
+  socket.emit('formation_update', {
+    formation: serializeFormation(state),
+  });
+  socket.emit('synergy_update', {
+    formation: serializeFormation(state),
   });
 }
 
@@ -213,6 +231,7 @@ function pairPlayersIfReady() {
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
 app.get('/', (_req, res) => {
   res.send('One Piece Auto Battler server is running.');
@@ -260,6 +279,38 @@ app.post('/api/synergy-preview', (req, res) => {
     .filter((u): u is NonNullable<typeof u> => Boolean(u));
   const synergies = computeSynergies(selected);
   res.json({ count: selected.length, synergies });
+});
+
+app.get('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const state = getFormation(user.id);
+  res.json({ formation: state ? serializeFormation(state) : { slots: [], locked: false } });
+});
+
+app.post('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const bench = getPlayerState(user).bench;
+  const payload = req.body as { slots: { index: number; instanceId: string }[] };
+  try {
+    const formation = buildFormationState(payload, bench, unitsById);
+    formationByUser.set(user.id, formation);
+    emitFormationUpdate(user.id, formation);
+    res.json({ formation: serializeFormation(formation) });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message ?? 'Invalid formation' });
+  }
+});
+
+app.post('/api/formation/lock', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const formation = formationByUser.get(user.id);
+  if (!formation) {
+    return res.status(400).json({ error: 'No formation set' });
+  }
+  const locked = lockFormation(formation);
+  formationByUser.set(user.id, locked);
+  emitFormationUpdate(user.id, locked);
+  res.json({ formation: serializeFormation(locked) });
 });
 
 app.get('/api/shop', authMiddleware, (req: AuthedRequest, res) => {
@@ -375,6 +426,30 @@ io.on('connection', (socket) => {
   socket.on('leave_queue', (callback?: (data: any) => void) => {
     removeFromQueue(user.id);
     callback?.({ status: 'left' });
+  });
+
+  socket.on('set_formation', (payload: { slots: { index: number; instanceId: string }[] }, callback?: (data: any) => void) => {
+    const bench = getPlayerState(user).bench;
+    try {
+      const formation = buildFormationState(payload, bench, unitsById);
+      formationByUser.set(user.id, formation);
+      emitFormationUpdate(user.id, formation);
+      callback?.({ status: 'ok', formation: serializeFormation(formation) });
+    } catch (err: any) {
+      callback?.({ status: 'error', error: err.message ?? 'Invalid formation' });
+    }
+  });
+
+  socket.on('lock_formation', (callback?: (data: any) => void) => {
+    const formation = formationByUser.get(user.id);
+    if (!formation) {
+      callback?.({ status: 'error', error: 'No formation set' });
+      return;
+    }
+    const locked = lockFormation(formation);
+    formationByUser.set(user.id, locked);
+    emitFormationUpdate(user.id, locked);
+    callback?.({ status: 'ok', formation: serializeFormation(locked) });
   });
 
   socket.on('disconnect', () => {
