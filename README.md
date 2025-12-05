@@ -6,6 +6,7 @@ Backend skeleton for the One Piece TFT-style auto battler. Includes JWT auth, lo
 - Copy `.env.example` to `.env` and set `JWT_SECRET`.
 - Install deps: `npm install`
 - Run dev server: `npm run dev` (defaults to port 3000)
+- Frontend: `cd client && npm install`
 
 ## Scripts
 - `npm run dev` — start server with reload
@@ -13,6 +14,9 @@ Backend skeleton for the One Piece TFT-style auto battler. Includes JWT auth, lo
 - `npm start` — run compiled server
 - `npm run check` — type-check without emit
 - `npm test` — run unit tests (JWT helpers + auth middleware; socket test skipped in sandbox)
+- Frontend (React):
+- `cd client && npm run dev` (Vite dev server on 5173; set `VITE_API_BASE=http://localhost:3000` if backend differs)
+- `cd client && npm run build` to generate `client/dist`
 
 ## Docker
 - Build: `docker build -t one-piece-auto-battle .`
@@ -41,6 +45,7 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 - `POST /api/formation` body `{ "slots":[{"index":0,"instanceId":"..."}] }` — validate and set formation
 - `POST /api/formation/lock` — lock current formation for battle
 - Frontend: open `http://localhost:3000/` after starting the server to use the prototype UI (login, shop, bench, formation, queue).
+- React client: run via Vite dev server (`cd client && npm run dev`) for the upgraded UI; default API base is `http://localhost:3000` or override with `VITE_API_BASE`.
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
@@ -61,3 +66,4 @@ Server -> Client:
 - Express endpoints: `/health`, `/api/login`, `/api/me`, `/api/lobby`.
 - CI: basic type-check workflow in `.github/workflows/ci.yml`.
 - Socket test is skipped in CI because binding to ports is blocked in this environment. Run locally to exercise Socket.io matchmaking.
+- React client is pinned to Vite 5/React 18 for Node 18 compatibility; upgrade Node to use newer Vite/React templates if desired.
