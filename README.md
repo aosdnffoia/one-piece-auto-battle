@@ -27,6 +27,13 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 3) Emit `join_queue` with optional `{ allowBot: true }` to get matched quickly (bot after ~1s if alone).
 4) Listen for `match_found` and `round_start` (placeholder bot battle message).
 
+## Game Data (Phase 2)
+- Static seeds for 49 units, faction synergies, and role synergies live in `src/gameData`.
+- HTTP endpoints:
+  - `GET /api/units` — serialized unit list (for shop/formation UI)
+  - `GET /api/synergies` — faction + role synergy definitions
+  - `POST /api/synergy-preview` body `{ "unitIds": ["luffy","zoro"] }` — returns active synergies for selected units
+
 ## WebSocket Events (Phase 1)
 Client -> Server:
 - `join_queue` (payload: `{ allowBot?: boolean }`, ack returns `{ status, position }`)

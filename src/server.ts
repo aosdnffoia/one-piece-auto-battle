@@ -5,6 +5,7 @@ import http from 'http';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'crypto';
 import { Server, Socket } from 'socket.io';
+import { computeSynergies, factionSynergies, roleSynergies, serializeUnit, units } from './gameData';
 
 dotenv.config();
 
@@ -40,6 +41,7 @@ const waitingQueue: string[] = [];
 const socketByUser = new Map<string, Socket>();
 const activeMatches = new Map<string, Match>();
 const botTimeouts = new Map<string, NodeJS.Timeout>();
+const unitsById = new Map(units.map((u) => [u.id, u]));
 
 function getJwtSecret(): string {
   if (!JWT_SECRET) {
@@ -213,6 +215,23 @@ app.get('/api/lobby', (_req, res) => {
   res.json({
     message: 'Lobby placeholder ready. Connect via WebSocket to join_queue.',
   });
+});
+
+app.get('/api/units', (_req, res) => {
+  res.json({ units: units.map(serializeUnit) });
+});
+
+app.get('/api/synergies', (_req, res) => {
+  res.json({ factions: factionSynergies, roles: roleSynergies });
+});
+
+app.post('/api/synergy-preview', (req, res) => {
+  const ids = Array.isArray(req.body?.unitIds) ? (req.body.unitIds as string[]) : [];
+  const selected = ids
+    .map((id) => unitsById.get(id))
+    .filter((u): u is NonNullable<typeof u> => Boolean(u));
+  const synergies = computeSynergies(selected);
+  res.json({ count: selected.length, synergies });
 });
 
 const httpServer = http.createServer(app);
