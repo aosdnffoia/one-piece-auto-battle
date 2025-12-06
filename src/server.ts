@@ -365,6 +365,90 @@ app.post('/api/pve/start', authMiddleware, (req: AuthedRequest, res) => {
   res.json(payload);
 });
 
+function calculateDamage(survivorIds: string[], unitLookup: Map<string, ReturnType<typeof unitsById.get>>) {
+  let tierBonus = 0;
+  for (const id of survivorIds) {
+    const unit = Array.from(unitLookup.values()).find((u) => u?.id === id);
+    if (unit) tierBonus += Math.max(0, unit.tier - 1);
+  }
+  return survivorIds.length * 2 + tierBonus;
+}
+
+app.post('/api/pvp/start', authMiddleware, (req: AuthedRequest, res) => {
+  const user = req.user as AuthUser;
+  const opponentId = String(req.body?.opponentId || '');
+  const userFormation = formationByUser.get(user.id);
+  if (!userFormation || userFormation.slots.length === 0) {
+    return res.status(400).json({ error: 'No formation set' });
+  }
+
+  let opponentFormation = opponentId ? formationByUser.get(opponentId) : undefined;
+  let opponentUser = opponentId ? users.get(opponentId) : undefined;
+  let opponentName = opponentUser?.username ?? 'Training Dummy';
+
+  if (!opponentFormation) {
+    // fallback bot using first PVE wave
+    const wave = getWaveByIndex(1);
+    if (!wave) return res.status(400).json({ error: 'No bot formation available' });
+    opponentFormation = {
+      slots: wave.units.map((u, idx) => ({ index: idx, instanceId: `bot-${u.id}-${idx}`, unitId: u.id })),
+      locked: true,
+      synergySummary: { faction: [], role: [] },
+    };
+    opponentName = 'Training Dummy';
+  }
+
+  const playerUnits = mapFormationToCombat(
+    { slots: userFormation.slots.map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })) },
+    unitsById,
+  );
+  const enemyUnits = mapFormationToCombat(
+    { slots: opponentFormation.slots.map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })) },
+    unitsById,
+  );
+  if (enemyUnits.length === 0) return res.status(400).json({ error: 'Opponent has no units placed' });
+
+  const result = simulateBattle(playerUnits, enemyUnits);
+
+  let playerHp = user.hp;
+  let opponentHp = opponentUser?.hp ?? 0;
+
+  if (result.winner === 'player' && opponentUser) {
+    const damage = calculateDamage(result.survivorsPlayerIds, unitsById);
+    opponentHp = Math.max(0, opponentUser.hp - damage);
+    opponentUser.hp = opponentHp;
+  } else if (result.winner === 'enemy') {
+    const damage = calculateDamage(result.survivorsEnemyIds, unitsById);
+    playerHp = Math.max(0, user.hp - damage);
+    user.hp = playerHp;
+  }
+
+  const payload = {
+    opponent: opponentName,
+    result: result.winner,
+    survivorsPlayer: result.survivorsPlayer,
+    survivorsEnemy: result.survivorsEnemy,
+    log: result.log,
+    playerHp,
+    opponentHp,
+  };
+
+  const userSocket = socketByUser.get(user.id);
+  const oppSocket = opponentUser ? socketByUser.get(opponentUser.id) : undefined;
+  userSocket?.emit('round_start', { mode: 'pvp', opponent: opponentName });
+  oppSocket?.emit('round_start', { mode: 'pvp', opponent: user.username });
+  userSocket?.emit('round_result', payload);
+  oppSocket?.emit('round_result', {
+    ...payload,
+    opponent: user.username,
+    result: result.winner === 'player' ? 'enemy' : result.winner === 'enemy' ? 'player' : 'draw',
+  });
+  userSocket?.emit('player_hp_update', { hp: playerHp });
+  oppSocket?.emit('player_hp_update', { hp: opponentHp });
+
+  res.json(payload);
+});
+
 app.get('/api/shop', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
   const state = getPlayerState(user);

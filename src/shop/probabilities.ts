@@ -2,8 +2,8 @@ import { TierProbabilities } from './types';
 
 // Probabilities loosely mimic TFT style scaling; values sum to 1 per level.
 export const SHOP_PROBABILITIES: Record<number, TierProbabilities> = {
-  1: { 1: 1 },
-  2: { 1: 0.7, 2: 0.3 },
+  1: { 1: 0.6, 2: 0.4 },
+  2: { 1: 0.5, 2: 0.35, 3: 0.15 },
   3: { 1: 0.5, 2: 0.35, 3: 0.15 },
   4: { 1: 0.35, 2: 0.4, 3: 0.2, 4: 0.05 },
   5: { 1: 0.25, 2: 0.35, 3: 0.25, 4: 0.12, 5: 0.03 },

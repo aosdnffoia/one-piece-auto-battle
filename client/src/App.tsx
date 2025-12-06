@@ -249,6 +249,15 @@ function App() {
     }
   }
 
+  async function startPvp() {
+    try {
+      const res = await api<any>('/api/pvp/start', { method: 'POST' });
+      appendLog(`PVP vs ${res.opponent}: ${res.result}, HP: you ${res.playerHp} opp ${res.opponentHp}`);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  }
+
   function benchName(b: BenchUnit) {
     return unitsById.get(b.unitId)?.name || b.unitId;
   }
@@ -431,6 +440,9 @@ function App() {
             <h2>PVE Waves</h2>
             <button className="btn small primary" onClick={startPve}>
               Start Wave {pveWave}
+            </button>
+            <button className="btn small ghost" onClick={startPvp}>
+              Quick PVP (bot)
             </button>
           </div>
           <div className="muted">Current wave: {pveWave}</div>

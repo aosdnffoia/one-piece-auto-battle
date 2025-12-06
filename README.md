@@ -49,6 +49,8 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 - PVE (Phase 5):
 - `GET /api/pve/waves` — list configured waves
 - `POST /api/pve/start` — run current PVE wave using your saved formation; rewards coins/xp on win and advances wave counter
+- PVP (Phase 6):
+- `POST /api/pvp/start` — simulate a PVP battle vs specified `opponentId` or fallback bot; updates HP based on surviving units
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
@@ -64,6 +66,7 @@ Server -> Client:
 - `formation_update` `{ formation }`
 - `synergy_update` `{ formation }`
 - `round_result` for PVE start endpoint returns via socket (and HTTP response)
+- `player_hp_update` after PVP result
 
 ## Notes
 - State is in-memory for now (users reset on restart).

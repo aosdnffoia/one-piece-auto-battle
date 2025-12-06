@@ -20,6 +20,9 @@ export const units: UnitDefinition[] = [
   { id: 'aokiji', name: 'Kuzan', faction: 'navy', role: 'control', tier: 4, power: 60, health: 760, abilityType: 'cast', abilityValue: 100, abilityDescription: 'Ice age freezes an area', image: 'img/aokiji.png' },
   { id: 'garp', name: 'Monkey D. Garp', faction: 'navy', role: 'tank', tier: 4, power: 66, health: 880, abilityType: 'passive', abilityValue: 50, abilityDescription: 'Iron fist shields allies', image: 'img/garp.png' },
   { id: 'coby', name: 'Coby', faction: 'navy', role: 'support', tier: 1, power: 26, health: 420, abilityType: 'cast', abilityValue: 45, abilityDescription: 'Inspires allies with courage', image: 'img/coby.png' },
+  { id: 'marine_recruit', name: 'Marine Recruit', faction: 'navy', role: 'attacker', tier: 1, power: 24, health: 360, abilityType: 'on_hit', abilityValue: 20, abilityDescription: 'Rifle shot deals steady damage', image: 'img/marine_recruit.png' },
+  { id: 'marine_medic', name: 'Marine Medic', faction: 'navy', role: 'support', tier: 1, power: 18, health: 340, abilityType: 'cast', abilityValue: 30, abilityDescription: 'Tosses a small heal to the weakest ally', image: 'img/marine_medic.png' },
+  { id: 'beast_scrapper', name: 'Beast Scrapper', faction: 'beast_pirates', role: 'attacker', tier: 1, power: 28, health: 380, abilityType: 'on_hit', abilityValue: 24, abilityDescription: 'Wild swings apply light bleed', image: 'img/beast_scrapper.png' },
 
   { id: 'kaido', name: 'Kaido', faction: 'beast_pirates', role: 'tank', tier: 5, power: 85, health: 1100, abilityType: 'cast', abilityValue: 140, abilityDescription: 'Dragon form breathes fire', image: 'img/kaido.png' },
   { id: 'king', name: 'King', faction: 'beast_pirates', role: 'tank', tier: 4, power: 62, health: 900, abilityType: 'passive', abilityValue: 60, abilityDescription: 'Lunarian flames reduce damage', image: 'img/king.png' },

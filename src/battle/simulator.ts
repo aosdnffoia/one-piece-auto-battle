@@ -26,6 +26,8 @@ export type BattleResult = {
   ticks: number;
   survivorsPlayer: number;
   survivorsEnemy: number;
+  survivorsPlayerIds: string[];
+  survivorsEnemyIds: string[];
   log: BattleLogEntry[];
 };
 
@@ -76,14 +78,24 @@ export function simulateBattle(playerTeam: CombatUnit[], enemyTeam: CombatUnit[]
     log.push({ tick, actions });
   }
 
-  const survivorsPlayer = player.filter((u) => u.health > 0).length;
-  const survivorsEnemy = enemy.filter((u) => u.health > 0).length;
+  const survivorPlayerUnits = player.filter((u) => u.health > 0);
+  const survivorEnemyUnits = enemy.filter((u) => u.health > 0);
+  const survivorsPlayer = survivorPlayerUnits.length;
+  const survivorsEnemy = survivorEnemyUnits.length;
 
   let winner: BattleResult['winner'] = 'draw';
   if (survivorsPlayer > 0 && survivorsEnemy === 0) winner = 'player';
   else if (survivorsEnemy > 0 && survivorsPlayer === 0) winner = 'enemy';
 
-  return { winner, ticks: tick, survivorsPlayer, survivorsEnemy, log };
+  return {
+    winner,
+    ticks: tick,
+    survivorsPlayer,
+    survivorsEnemy,
+    survivorsPlayerIds: survivorPlayerUnits.map((u) => u.id),
+    survivorsEnemyIds: survivorEnemyUnits.map((u) => u.id),
+    log,
+  };
 }
 
 export function mapFormationToCombat(formation: { slots: { instanceId: string; unitId?: string }[] }, unitLookup: Map<string, UnitDefinition>): CombatUnit[] {

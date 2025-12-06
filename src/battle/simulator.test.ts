@@ -13,6 +13,7 @@ describe('simulateBattle', () => {
     const result = simulateBattle(player, enemy);
     expect(result.winner).toBe('player');
     expect(result.survivorsPlayer).toBeGreaterThan(0);
+    expect(result.survivorsPlayerIds.length).toBeGreaterThan(0);
   });
 
   test('maps pve units to combat units', () => {
