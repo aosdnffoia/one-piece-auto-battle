@@ -37,6 +37,9 @@ type Match = {
   id: string;
   players: string[];
   createdAt: number;
+  roundIndex: number;
+  roundOrder: ('pve' | 'pvp')[];
+  timer?: NodeJS.Timeout;
 };
 
 type AuthedRequest = Request & { user?: AuthUser };
@@ -52,6 +55,9 @@ const playerStateByUser = new Map<string, PlayerState>();
 const formationByUser = new Map<string, FormationState>();
 
 seedTierBuckets(units);
+
+const DEFAULT_ROUND_ORDER: ('pve' | 'pvp')[] = ['pve', 'pve', 'pvp', 'pve', 'pvp', 'pvp', 'pvp'];
+const ROUND_INTERVAL_MS = 4000;
 
 function getJwtSecret(): string {
   if (!JWT_SECRET) {
@@ -179,7 +185,7 @@ function pairWithBot(userId: string) {
   const socket = socketByUser.get(userId);
   if (!socket) return;
   const roomId = randomUUID();
-  const match: Match = { id: roomId, players: [userId, 'bot'], createdAt: Date.now() };
+  const match: Match = { id: roomId, players: [userId, 'bot'], createdAt: Date.now(), roundIndex: 0, roundOrder: DEFAULT_ROUND_ORDER };
   activeMatches.set(roomId, match);
   socket.join(roomId);
   socket.emit('match_found', {
@@ -187,7 +193,7 @@ function pairWithBot(userId: string) {
     opponent: { id: 'bot', username: 'Training Dummy' },
     isBot: true,
   });
-  socket.emit('round_start', { roomId, mode: 'pve', message: 'Bot placeholder battle' });
+  scheduleNextRound(roomId);
 }
 
 function pairPlayersIfReady() {
@@ -208,7 +214,7 @@ function pairPlayersIfReady() {
     }
 
     const roomId = randomUUID();
-    const match: Match = { id: roomId, players: [first, second], createdAt: Date.now() };
+    const match: Match = { id: roomId, players: [first, second], createdAt: Date.now(), roundIndex: 0, roundOrder: DEFAULT_ROUND_ORDER };
     activeMatches.set(roomId, match);
 
     firstSocket.join(roomId);
@@ -226,6 +232,8 @@ function pairPlayersIfReady() {
       opponent: { id: first, username: firstUser?.username ?? 'Pirate' },
       isBot: false,
     });
+
+    scheduleNextRound(roomId);
   }
 }
 
@@ -365,13 +373,8 @@ app.post('/api/pve/start', authMiddleware, (req: AuthedRequest, res) => {
   res.json(payload);
 });
 
-function calculateDamage(survivorIds: string[], unitLookup: Map<string, ReturnType<typeof unitsById.get>>) {
-  let tierBonus = 0;
-  for (const id of survivorIds) {
-    const unit = Array.from(unitLookup.values()).find((u) => u?.id === id);
-    if (unit) tierBonus += Math.max(0, unit.tier - 1);
-  }
-  return survivorIds.length * 2 + tierBonus;
+function calculateDamageFromCount(survivors: number) {
+  return survivors * 2;
 }
 
 app.post('/api/pvp/start', authMiddleware, (req: AuthedRequest, res) => {
@@ -414,11 +417,11 @@ app.post('/api/pvp/start', authMiddleware, (req: AuthedRequest, res) => {
   let opponentHp = opponentUser?.hp ?? 0;
 
   if (result.winner === 'player' && opponentUser) {
-    const damage = calculateDamage(result.survivorsPlayerIds, unitsById);
+    const damage = calculateDamageFromCount(result.survivorsPlayer);
     opponentHp = Math.max(0, opponentUser.hp - damage);
     opponentUser.hp = opponentHp;
   } else if (result.winner === 'enemy') {
-    const damage = calculateDamage(result.survivorsEnemyIds, unitsById);
+    const damage = calculateDamageFromCount(result.survivorsEnemy);
     playerHp = Math.max(0, user.hp - damage);
     user.hp = playerHp;
   }
@@ -593,6 +596,166 @@ io.on('connection', (socket) => {
     socketByUser.delete(user.id);
   });
 });
+
+function endMatch(matchId: string) {
+  const match = activeMatches.get(matchId);
+  if (!match) return;
+  const alive = match.players.filter((id) => (users.get(id)?.hp ?? 0) > 0);
+  const winnerId = alive[0];
+  const winnerName = winnerId ? users.get(winnerId)?.username ?? 'Winner' : 'Draw';
+  for (const userId of match.players) {
+    const socket = socketByUser.get(userId);
+    socket?.emit('match_end', { winner: winnerName });
+  }
+  if (match.timer) {
+    clearTimeout(match.timer);
+  }
+  activeMatches.delete(matchId);
+}
+
+function scheduleNextRound(matchId: string) {
+  const match = activeMatches.get(matchId);
+  if (!match) return;
+  if (match.timer) clearTimeout(match.timer);
+  match.timer = setTimeout(() => runRound(matchId), ROUND_INTERVAL_MS);
+  activeMatches.set(matchId, match);
+}
+
+function runRound(matchId: string) {
+  const match = activeMatches.get(matchId);
+  if (!match) return;
+  const alivePlayers = match.players.filter((id) => (users.get(id)?.hp ?? 0) > 0);
+  if (alivePlayers.length <= 1) {
+    endMatch(matchId);
+    return;
+  }
+  const mode = match.roundIndex < match.roundOrder.length ? match.roundOrder[match.roundIndex] : 'pvp';
+  if (mode === 'pve') {
+    runPveRound(matchId, match.roundIndex + 1);
+  } else {
+    runPvpRound(matchId);
+  }
+  match.roundIndex += 1;
+  activeMatches.set(matchId, match);
+  scheduleNextRound(matchId);
+}
+
+function runPveRound(matchId: string, roundNumber: number) {
+  const match = activeMatches.get(matchId);
+  if (!match) return;
+  const wave = getWaveByIndex(Math.min(roundNumber, pveWaves.length)) ?? pveWaves[pveWaves.length - 1];
+  for (const playerId of match.players) {
+    const user = users.get(playerId);
+    if (!user || user.hp <= 0) continue;
+    const formation = formationByUser.get(playerId);
+    const playerUnits = mapFormationToCombat(
+      { slots: (formation?.slots ?? []).map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })) },
+      unitsById,
+    );
+    const enemyUnits = mapPveUnits(wave.units);
+    const result = simulateBattle(playerUnits, enemyUnits);
+
+    let coinsEarned = 0;
+    let xpEarned = 0;
+    const state = getPlayerState(user);
+    if (result.winner === 'player') {
+      coinsEarned = wave.rewardCoins;
+      xpEarned = wave.rewardXp;
+      state.coins += coinsEarned;
+      state.xp += xpEarned;
+      state.pveWave = Math.max(state.pveWave, roundNumber + 1);
+      emitShopUpdate(user.id, state);
+    }
+    const payload = {
+      wave: wave.id,
+      name: wave.name,
+      result: result.winner,
+      coinsEarned,
+      xpEarned,
+      survivorsPlayer: result.survivorsPlayer,
+      survivorsEnemy: result.survivorsEnemy,
+      log: result.log,
+      nextWave: state.pveWave,
+      round: roundNumber,
+    };
+    const socket = socketByUser.get(user.id);
+    socket?.emit('round_start', { mode: 'pve', wave: wave.id, round: roundNumber });
+    socket?.emit('round_result', payload);
+  }
+}
+
+function runPvpRound(matchId: string) {
+  const match = activeMatches.get(matchId);
+  if (!match) return;
+  const alivePlayers = match.players.filter((id) => (users.get(id)?.hp ?? 0) > 0);
+  if (alivePlayers.length <= 1) {
+    endMatch(matchId);
+    return;
+  }
+  const playerAId = alivePlayers[0];
+  const playerBId = alivePlayers[1] ?? alivePlayers[0];
+
+  const userA = users.get(playerAId);
+  const userB = users.get(playerBId);
+  if (!userA || !userB) return;
+
+  const formationA = formationByUser.get(playerAId);
+  const formationB = formationByUser.get(playerBId);
+  const unitsA = mapFormationToCombat(
+    { slots: (formationA?.slots ?? []).map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })) },
+    unitsById,
+  );
+  const unitsB = mapFormationToCombat(
+    { slots: (formationB?.slots ?? []).map((s) => ({ instanceId: s.instanceId, unitId: s.unitId })) },
+    unitsById,
+  );
+
+  const result = simulateBattle(unitsA, unitsB);
+  let winner: 'playerA' | 'playerB' | 'draw' = 'draw';
+  if (result.winner === 'player') winner = 'playerA';
+  else if (result.winner === 'enemy') winner = 'playerB';
+
+  if (winner === 'playerA') {
+    const damage = calculateDamageFromCount(result.survivorsPlayer);
+    userB.hp = Math.max(0, userB.hp - damage);
+  } else if (winner === 'playerB') {
+    const damage = calculateDamageFromCount(result.survivorsEnemy);
+    userA.hp = Math.max(0, userA.hp - damage);
+  }
+
+  const socketA = socketByUser.get(playerAId);
+  const socketB = socketByUser.get(playerBId);
+
+  socketA?.emit('round_start', { mode: 'pvp', opponent: userB.username });
+  socketB?.emit('round_start', { mode: 'pvp', opponent: userA.username });
+
+  socketA?.emit('round_result', {
+    opponent: userB.username,
+    result: winner === 'playerA' ? 'player' : winner === 'playerB' ? 'enemy' : 'draw',
+    survivorsPlayer: result.survivorsPlayer,
+    survivorsEnemy: result.survivorsEnemy,
+    log: result.log,
+    playerHp: userA.hp,
+    opponentHp: userB.hp,
+  });
+
+  socketB?.emit('round_result', {
+    opponent: userA.username,
+    result: winner === 'playerB' ? 'player' : winner === 'playerA' ? 'enemy' : 'draw',
+    survivorsPlayer: result.survivorsEnemy,
+    survivorsEnemy: result.survivorsPlayer,
+    log: result.log,
+    playerHp: userB.hp,
+    opponentHp: userA.hp,
+  });
+
+  socketA?.emit('player_hp_update', { hp: userA.hp });
+  socketB?.emit('player_hp_update', { hp: userB.hp });
+
+  if (userA.hp <= 0 || userB.hp <= 0) {
+    endMatch(matchId);
+  }
+}
 
 let started = false;
 
