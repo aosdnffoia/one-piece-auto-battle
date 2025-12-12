@@ -50,6 +50,8 @@ function App() {
   const [level, setLevel] = useState(1);
   const [pveWave, setPveWave] = useState(1);
   const [waves, setWaves] = useState<PveWave[]>([]);
+  const [hp, setHp] = useState(30);
+  const [maxHp, setMaxHp] = useState(30);
   const [logs, setLogs] = useState<string[]>([]);
   const [queueStatus, setQueueStatus] = useState<string>('not queued');
   const [selectedBenchId, setSelectedBenchId] = useState<string | null>(null);
@@ -121,6 +123,12 @@ function App() {
     s.on('round_result', (data: any) => {
       appendLog(`Round result: ${data.result} (wave ${data.wave || ''})`);
     });
+    s.on('player_hp_update', (data: any) => {
+      if (typeof data.hp === 'number') setHp(data.hp);
+    });
+    s.on('match_end', (data: any) => {
+      appendLog(`Match ended. Winner: ${data.winner}`);
+    });
     return () => {
       s.disconnect();
     };
@@ -139,6 +147,8 @@ function App() {
       setToken(data.token);
       setCoins(data.state.coins);
       setBench(data.state.bench || []);
+      setHp(data.user.hp || 30);
+      setMaxHp(data.user.hp || 30);
       appendLog(`Logged in as ${data.user.username}`);
       await Promise.all([loadShop(data.token || token), loadFormation(data.token || token)]);
     } catch (err: any) {
@@ -336,6 +346,10 @@ function App() {
           </button>
         </div>
         <div className="status">
+          <div className="hpbar">
+            <div className="hp-fill" style={{ width: `${Math.max(0, Math.min(1, hp / maxHp)) * 100}%` }} />
+            <span className="hp-text">HP {hp}/{maxHp}</span>
+          </div>
           <div>Coins: {coins}</div>
           <div>Level: {level}</div>
           <div>Queue: {queueStatus}</div>

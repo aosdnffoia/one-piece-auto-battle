@@ -53,11 +53,14 @@ const botTimeouts = new Map<string, NodeJS.Timeout>();
 const unitsById = new Map(units.map((u) => [u.id, u]));
 const playerStateByUser = new Map<string, PlayerState>();
 const formationByUser = new Map<string, FormationState>();
+const rateLimitState = new Map<string, { windowStart: number; count: number }>();
 
 seedTierBuckets(units);
 
 const DEFAULT_ROUND_ORDER: ('pve' | 'pvp')[] = ['pve', 'pve', 'pvp', 'pve', 'pvp', 'pvp', 'pvp'];
 const ROUND_INTERVAL_MS = 4000;
+const RATE_LIMIT_WINDOW_MS = 2000;
+const RATE_LIMIT_MAX = 8;
 
 function getJwtSecret(): string {
   if (!JWT_SECRET) {
@@ -108,6 +111,22 @@ function issueToken(user: AuthUser) {
   return jwt.sign({ sub: user.id, username: user.username }, secret, {
     expiresIn: '12h',
   });
+}
+
+function rateLimit(userId: string, key: string, max = RATE_LIMIT_MAX, windowMs = RATE_LIMIT_WINDOW_MS): boolean {
+  const composite = `${userId}:${key}`;
+  const now = Date.now();
+  const entry = rateLimitState.get(composite);
+  if (!entry || now - entry.windowStart > windowMs) {
+    rateLimitState.set(composite, { windowStart: now, count: 1 });
+    return true;
+  }
+  if (entry.count >= max) {
+    return false;
+  }
+  entry.count += 1;
+  rateLimitState.set(composite, entry);
+  return true;
 }
 
 function authMiddleware(req: AuthedRequest, res: Response, next: NextFunction) {
@@ -302,6 +321,9 @@ app.get('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'set_formation')) {
+    return res.status(429).json({ error: 'Too many formation updates' });
+  }
   const bench = getPlayerState(user).bench;
   const payload = req.body as { slots: { index: number; instanceId: string }[] };
   try {
@@ -316,6 +338,9 @@ app.post('/api/formation', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/formation/lock', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'lock_formation', 4, 4000)) {
+    return res.status(429).json({ error: 'Too many lock attempts' });
+  }
   const formation = formationByUser.get(user.id);
   if (!formation) {
     return res.status(400).json({ error: 'No formation set' });
@@ -328,6 +353,9 @@ app.post('/api/formation/lock', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/pve/start', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'pve_start', 3, 5000)) {
+    return res.status(429).json({ error: 'Too many PVE starts' });
+  }
   const state = getPlayerState(user);
   const formation = formationByUser.get(user.id);
   if (!formation || formation.slots.length === 0) {
@@ -379,6 +407,9 @@ function calculateDamageFromCount(survivors: number) {
 
 app.post('/api/pvp/start', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'pvp_start', 3, 5000)) {
+    return res.status(429).json({ error: 'Too many PVP starts' });
+  }
   const opponentId = String(req.body?.opponentId || '');
   const userFormation = formationByUser.get(user.id);
   if (!userFormation || userFormation.slots.length === 0) {
@@ -460,6 +491,9 @@ app.get('/api/shop', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/shop/reroll', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'shop_reroll')) {
+    return res.status(429).json({ error: 'Too many rerolls, slow down' });
+  }
   const state = getPlayerState(user);
   try {
     rerollShop(state);
@@ -472,6 +506,9 @@ app.post('/api/shop/reroll', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/shop/buy', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'shop_buy')) {
+    return res.status(429).json({ error: 'Too many buy attempts' });
+  }
   const state = getPlayerState(user);
   const unitId = String(req.body?.unitId || '');
   if (!unitId) {
@@ -494,6 +531,9 @@ app.post('/api/shop/buy', authMiddleware, (req: AuthedRequest, res) => {
 
 app.post('/api/shop/sell', authMiddleware, (req: AuthedRequest, res) => {
   const user = req.user as AuthUser;
+  if (!rateLimit(user.id, 'shop_sell')) {
+    return res.status(429).json({ error: 'Too many sell attempts' });
+  }
   const state = getPlayerState(user);
   const instanceId = String(req.body?.instanceId || '');
   if (!instanceId) {
@@ -550,6 +590,10 @@ io.on('connection', (socket) => {
   socketByUser.set(user.id, socket);
 
   socket.on('join_queue', (payload?: { allowBot?: boolean }, callback?: (data: any) => void) => {
+    if (!rateLimit(user.id, 'join_queue')) {
+      callback?.({ status: 'error', error: 'Too many queue attempts' });
+      return;
+    }
     if (waitingQueue.includes(user.id)) {
       callback?.({ status: 'queued', position: waitingQueue.indexOf(user.id) + 1 });
       return;
@@ -568,6 +612,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('set_formation', (payload: { slots: { index: number; instanceId: string }[] }, callback?: (data: any) => void) => {
+    if (!rateLimit(user.id, 'set_formation')) {
+      callback?.({ status: 'error', error: 'Too many formation updates' });
+      return;
+    }
     const bench = getPlayerState(user).bench;
     try {
       const formation = buildFormationState(payload, bench, unitsById);
@@ -580,6 +628,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('lock_formation', (callback?: (data: any) => void) => {
+    if (!rateLimit(user.id, 'lock_formation', 4, 4000)) {
+      callback?.({ status: 'error', error: 'Too many lock attempts' });
+      return;
+    }
     const formation = formationByUser.get(user.id);
     if (!formation) {
       callback?.({ status: 'error', error: 'No formation set' });

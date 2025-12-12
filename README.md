@@ -51,6 +51,7 @@ curl -X POST http://localhost:3000/api/login -H "Content-Type: application/json"
 - `POST /api/pve/start` — run current PVE wave using your saved formation; rewards coins/xp on win and advances wave counter
 - PVP (Phase 6):
 - `POST /api/pvp/start` — simulate a PVP battle vs specified `opponentId` or fallback bot; updates HP based on surviving units
+- Rate limits: basic per-user rate limits on shop/formation/PVE/PVP endpoints and socket actions to avoid spam.
 
 ## WebSocket Events (Phase 1)
 Client -> Server:
